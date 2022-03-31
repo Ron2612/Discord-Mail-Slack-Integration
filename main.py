@@ -524,3 +524,37 @@ async def sending_message_and_link(message: str, link: str):
     else:
         return JSONResponse(status_code=status.HTTP_200_OK, content='Message sent Successfully')
 
+
+@app.post("/slack/schedule_message")
+async def scheduling_message(message: str, date_and_time: str):
+    slack_client = WebClient(token="SLACK_BOT_TOKEN")
+    logger = logging.getLogger(__name__)
+
+    year = date_and_time[:4]
+    month = date_and_time[5:7]
+    day = date_and_time[8:10]
+    hour = date_and_time[11:13]
+    minute = date_and_time[14:16]
+
+    date_and_time = datetime.datetime.strptime(date_and_time, '%Y-%m-%d %H:%M')
+
+    channel_id = "C038RVCR19N"
+
+    if datetime.datetime.now() > datetime.datetime(year=int(year), month=int(month), day=int(day), hour=int(hour), minute=int(minute)):
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content='Past is out of your hands')
+
+
+    try:
+        result = slack_client.chat_scheduleMessage(
+            channel=channel_id,
+            text=message,
+            post_at=int(date_and_time.timestamp())
+        )
+
+        logger.info(result)
+
+    except SlackApiError as e:
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=e)
+
+    else:
+        return JSONResponse(status_code=status.HTTP_200_OK, content='Message scheduled Successfully')
