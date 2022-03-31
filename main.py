@@ -403,3 +403,41 @@ async def scheduling_message(message: str, date_and_time: str):
 
     else:
         return JSONResponse(status_code=status.HTTP_200_OK, content='Message Scheduled Successfully')
+
+
+@app.post("/discord/schedule_link_with_message")
+async def scheduling_message_and_link(message: str, date_and_time: str, link: str,):
+    link = markdown.markdown(link)
+    link = re.compile(r'<.*?>').sub('', link)
+
+    year = date_and_time[:4]
+    month = date_and_time[5:7]
+    day = date_and_time[8:10]
+    hour = date_and_time[11:13]
+    minute = date_and_time[14:16]
+
+    if datetime.datetime.now() > datetime.datetime(year=int(year), month=int(month), day=int(day), hour=int(hour), minute=int(minute)):
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content='Past is out of your hands')
+
+    async def scheduling_message_send():
+        channel_id = 955391175823618072
+        channel = client.get_channel(channel_id)
+        try:
+            return await channel.send(message + "\n" + link)
+
+        except Exception as e:
+            return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=e)
+
+    try:
+        scheduler = AsyncIOScheduler()
+        scheduler.add_job(scheduling_message_send, 'cron', year=year, month=month, day=day, hour=hour, minute=minute,
+                          second='00', timezone="Asia/Kolkata")
+
+        scheduler.start()
+        print(scheduler.get_jobs())
+
+    except Exception as e:
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=e)
+
+    else:
+        return JSONResponse(status_code=status.HTTP_200_OK, content='Message Scheduled Successfully')
