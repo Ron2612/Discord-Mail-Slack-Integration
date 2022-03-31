@@ -351,3 +351,20 @@ async def sending_message_and_file(message: str = Form(...), file: UploadFile = 
 
     finally:
         os.remove(tmp_path)
+
+
+@app.post("/discord/link_with_message")
+async def sending_message_and_link(message: str, link: str):
+    channel_id = 955391175823618072
+    channel = client.get_channel(channel_id)
+
+    link = markdown.markdown(link)
+    link = re.compile(r'<.*?>').sub('', link)
+    try:
+        await channel.send(message + "\n" + link)
+
+    except Exception as e:
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=e)
+
+    else:
+        return JSONResponse(status_code=status.HTTP_200_OK, content='Message sent Successfully.')
