@@ -240,3 +240,64 @@ async def scheduling(
 
     else:
         return JSONResponse(status_code=status.HTTP_200_OK, content="Mail scheduled Successfully")
+
+
+@app.post("/email/schedulingLink")
+async def scheduling_link(
+        subject: str = Form(...),
+        body: str = Form(...),
+        link: str = Form(...),
+        email: UploadFile = File(...),
+        date_and_time: str = Form(...)
+) -> JSONResponse:
+    year = date_and_time[:4]
+    month = date_and_time[5:7]
+    day = date_and_time[8:10]
+    hour = date_and_time[11:13]
+    minute = date_and_time[14:16]
+
+    if datetime.datetime.now() > datetime.datetime(year=int(year), month=int(month), day=int(day), hour=int(hour), minute=int(minute)):
+        return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content='Past is out of your hands')
+
+    link = markdown.markdown(link)
+    link = re.compile(r'<.*?>').sub('', link)
+
+    try:
+        dataframe = pd.read_csv(email.file, index_col=False, delimiter=',', header=None)
+
+    except pandas.errors.EmptyDataError:
+        print("Provided csv file is empty")
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST,
+                            content={'message': 'Provided csv file is empty.'})
+
+    if not email.filename.endswith('.csv'):
+        print("Please provide a csv file only")
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST,
+                            content={'message': 'Please provide a csv file only.'})
+
+    async def scheduling_message_schema():
+        message = MessageSchema(
+            recipients=[mails for mails in dataframe[0]],
+            subject=subject,
+            body=link + "\n" + body,
+            subtype="text"
+        )
+        try:
+            fm = FastMail(conf)
+            return await fm.send_message(message)
+
+        except Exception as e:
+            return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=e)
+
+    try:
+        scheduler = AsyncIOScheduler()
+        scheduler.add_job(scheduling_message_schema, 'cron', year=year, month=month, day=day, hour=hour, minute=minute,
+                          second='00', timezone="Asia/Kolkata")
+        scheduler.start()
+        print(scheduler.get_jobs())
+
+    except Exception as e:
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=e)
+
+    else:
+        return JSONResponse(status_code=status.HTTP_200_OK, content="Mail scheduled Successfully")
