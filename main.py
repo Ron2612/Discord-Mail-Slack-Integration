@@ -301,3 +301,25 @@ async def scheduling_link(
 
     else:
         return JSONResponse(status_code=status.HTTP_200_OK, content="Mail scheduled Successfully")
+
+
+client = discord.Client()
+
+
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(client.start('BOT_TOKEN'))
+
+
+@app.post("/discord/message")
+async def sending_message(message: str):
+    channel_id = 955391175823618072
+    channel = client.get_channel(channel_id)
+    try:
+        await channel.send(message)
+
+    except Exception as e:
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=e)
+
+    else:
+        return JSONResponse(status_code=status.HTTP_200_OK, content='Message sent Successfully.')
