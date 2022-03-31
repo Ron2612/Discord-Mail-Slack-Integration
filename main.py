@@ -62,8 +62,8 @@ conf = ConnectionConfig(
 
 @app.post("/email")
 async def sending_message(
-    subject: str,
-    body: str,
+    subject: str = Form(...),
+    body: str = Form(...),
     email: UploadFile = File(...),
 ) -> JSONResponse:
     message_subject = subject
@@ -89,7 +89,12 @@ async def sending_message(
         subtype="text"
     )
 
-    fm = FastMail(conf)
+    try:
+        fm = FastMail(conf)
+        await fm.send_message(message)
 
-    await fm.send_message(message)
-    return JSONResponse(status_code=200, content={"message": "email has been sent"})
+    except Exception as e:
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=e)
+
+    else:
+        return JSONResponse(status_code=status.HTTP_200_OK, content={"message": "email has been sent"})
