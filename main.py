@@ -499,3 +499,28 @@ async def sending_message_and_file(message: str = Form(...), file: UploadFile = 
     finally:
         os.remove(tmp_path)
 
+
+@app.post("/slack/link_with_message")
+async def sending_message_and_link(message: str, link: str):
+    slack_client = WebClient(token="SLACK_BOT_TOKEN")
+    logger = logging.getLogger(__name__)
+
+    channel_id = "C039T5WBGG0"
+
+    link = markdown.markdown(link)
+    link = re.compile(r'<.*?>').sub('', link)
+
+    try:
+        result = slack_client.chat_postMessage(
+            channel=channel_id,
+            text=message + "\n" + link
+        )
+
+        logger.info(result)
+
+    except SlackApiError as e:
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=e)
+
+    else:
+        return JSONResponse(status_code=status.HTTP_200_OK, content='Message sent Successfully')
+
