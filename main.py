@@ -139,3 +139,45 @@ async def sending_message_and_file(
 
     else:
         return JSONResponse(status_code=200, content={"message": "email has been sent"})
+
+
+@app.post("/email/link")
+async def sending_link_with_message(
+    subject: str = Form(...),
+    link: str = Form(...),
+    body: str = Form(...),
+    email: UploadFile = File(...),
+) -> JSONResponse:
+    message_subject = subject
+    link = markdown.markdown(link)
+    link = re.compile(r'<.*?>').sub('', link)
+    message_body = link + "\n" + body
+
+    try:
+        dataframe = pd.read_csv(email.file, index_col=False, delimiter=',', header=None)
+
+    except pandas.errors.EmptyDataError:
+        print("Provided csv file is empty")
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST,
+                            content={'message': 'Provided csv file is empty.'})
+
+    if not email.filename.endswith('.csv'):
+        print("Please provide a csv file only")
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST,
+                            content={'message': 'Please provide a csv file only.'})
+
+    message = MessageSchema(
+        recipients=[mails for mails in dataframe[0]],
+        subject=message_subject,
+        body=message_body,
+        subtype="text"
+    )
+    try:
+        fm = FastMail(conf)
+        await fm.send_message(message)
+
+    except Exception as e:
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=e)
+
+    else:
+        return JSONResponse(status_code=200, content={"message": "email has been sent"})
