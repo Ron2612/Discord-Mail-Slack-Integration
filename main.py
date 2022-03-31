@@ -308,7 +308,7 @@ client = discord.Client()
 
 @app.on_event("startup")
 async def startup_event():
-    asyncio.create_task(client.start('DISCORD_BOT_TOKEN'))
+    asyncio.create_task(client.start(os.getenv('DISCORD_BOT_TOKEN')))
 
 
 @app.post("/discord/message")
