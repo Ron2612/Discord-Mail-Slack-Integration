@@ -308,7 +308,7 @@ client = discord.Client()
 
 @app.on_event("startup")
 async def startup_event():
-    asyncio.create_task(client.start('BOT_TOKEN'))
+    asyncio.create_task(client.start('DISCORD_BOT_TOKEN'))
 
 
 @app.post("/discord/message")
@@ -323,3 +323,31 @@ async def sending_message(message: str):
 
     else:
         return JSONResponse(status_code=status.HTTP_200_OK, content='Message sent Successfully.')
+
+
+@app.post("/discord/file_with_message")
+async def sending_message_and_file(message: str = Form(...), file: UploadFile = Form(...)):
+    channel_id = 955391175823618072
+    channel = client.get_channel(channel_id)
+
+    try:
+        try:
+            suffix = Path(file.filename).suffix
+            with NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                shutil.copyfileobj(file.file, tmp)
+                tmp_path = Path(tmp.name)
+        finally:
+            file.file.close()
+
+        await channel.send(content=message, tts=False, embed=None,
+                           file=discord.File(tmp_path, spoiler=True), files=None, delete_after=None, nonce=None,
+                           allowed_mentions=None, reference=None, mention_author=None)
+
+    except Exception as e:
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=e)
+
+    else:
+        return JSONResponse(status_code=status.HTTP_200_OK, content='File and Message sent Successfully.')
+
+    finally:
+        os.remove(tmp_path)
