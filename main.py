@@ -3,12 +3,14 @@ import os
 from fastapi import (
     FastAPI,
     BackgroundTasks,
-    UploadFile, File, Form
+    UploadFile, File, Form, Depends, HTTPException
 )
 from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
 
 from typing import List
+
+from sqlalchemy.orm import Session
 from starlette import status
 from starlette.responses import JSONResponse
 import shutil
@@ -32,6 +34,9 @@ import discord
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 import logging
+
+import models, schemas, database
+from database import engine
 
 
 app = FastAPI()
@@ -59,12 +64,29 @@ conf = ConnectionConfig(
     VALIDATE_CERTS=True
 )
 
+models.Base.metadata.create_all(bind=engine)
+
+
+@app.post("/login")
+async def user_login(username: str = Form(...), password: str = Form(...), db: Session = Depends(database.get_db)):
+    user = db.query(models.User).filter(models.User.username == username).first()
+    if not user:
+        return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content=f"user {username} does not exists.")
+
+    if password != user.password:
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content="Invalid Credentials")
+
+    return JSONResponse(status_code=status.HTTP_202_ACCEPTED, content="Logged In")
+
 
 @app.post("/email")
 async def sending_message(
+    user: str = Form(...),
     subject: str = Form(...),
     body: str = Form(...),
-    email: UploadFile = File(...),
+    email: UploadFile = Form(...),
+    db: Session = Depends(database.get_db)
+
 ) -> JSONResponse:
     message_subject = subject
     message_body = body
@@ -97,16 +119,22 @@ async def sending_message(
         return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=e)
 
     else:
-        return JSONResponse(status_code=status.HTTP_200_OK, content={"message": "email has been sent"})
+        new_log = models.Logs(username=user, date_time=str(datetime.datetime.now()), action_performed="Sent an e-Mail")
+        db.add(new_log)
+        db.commit()
+        db.refresh(new_log)
+        return JSONResponse(status_code=status.HTTP_200_OK, content="Email sent successfully")
 
 
 @app.post("/email/file_with_message")
 async def sending_message_and_file(
         background_tasks: BackgroundTasks,
+        user: str = Form(...),
         subject: str = Form(...),
         body: str = Form(...),
         email: UploadFile = File(...),
-        file: List[UploadFile] = Form(...)
+        file: List[UploadFile] = Form(...),
+        db: Session = Depends(database.get_db)
 ) -> JSONResponse:
 
     try:
@@ -138,15 +166,22 @@ async def sending_message_and_file(
         return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=e)
 
     else:
-        return JSONResponse(status_code=200, content={"message": "email has been sent"})
+        new_log = models.Logs(username=user, date_time=str(datetime.datetime.now()), action_performed="Sent an e-Mail consisting of FIle")
+        db.add(new_log)
+        db.commit()
+        db.refresh(new_log)
+        return JSONResponse(status_code=200, content='Email consisting of File is sent successfully')
 
 
 @app.post("/email/link")
 async def sending_link_with_message(
+    user: str = Form(...),
     subject: str = Form(...),
     link: str = Form(...),
     body: str = Form(...),
     email: UploadFile = File(...),
+    db: Session = Depends(database.get_db)
+
 ) -> JSONResponse:
     message_subject = subject
     link = markdown.markdown(link)
@@ -180,15 +215,22 @@ async def sending_link_with_message(
         return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=e)
 
     else:
-        return JSONResponse(status_code=200, content={"message": "email has been sent"})
+        new_log = models.Logs(username=user, date_time=str(datetime.datetime.now()),
+                              action_performed="Sent an e-Mail consisting of FIle")
+        db.add(new_log)
+        db.commit()
+        db.refresh(new_log)
+        return JSONResponse(status_code=200, content="Email consisting of Link is sent successfully")
 
 
 @app.post("/email/schedulingMessage")
 async def scheduling(
+        user: str = Form(...),
         subject: str = Form(...),
         body: str = Form(...),
         email: UploadFile = File(...),
-        date_and_time: str = Form(...)
+        date_and_time: str = Form(...),
+        db: Session = Depends(database.get_db)
 ) -> JSONResponse:
 
     year = date_and_time[:4]
@@ -239,16 +281,24 @@ async def scheduling(
         return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=e)
 
     else:
-        return JSONResponse(status_code=status.HTTP_200_OK, content="Mail scheduled Successfully")
+        new_log = models.Logs(username=user, date_time=str(datetime.datetime.now()),
+                              action_performed="Scheduled an e-Mail")
+        db.add(new_log)
+        db.commit()
+        db.refresh(new_log)
+        return JSONResponse(status_code=status.HTTP_200_OK, content="Scheduled Email successfully")
 
 
 @app.post("/email/schedulingLink")
 async def scheduling_link(
+        user: str = Form(...),
         subject: str = Form(...),
         body: str = Form(...),
         link: str = Form(...),
         email: UploadFile = File(...),
-        date_and_time: str = Form(...)
+        date_and_time: str = Form(...),
+        db: Session = Depends(database.get_db)
+
 ) -> JSONResponse:
     year = date_and_time[:4]
     month = date_and_time[5:7]
@@ -300,8 +350,12 @@ async def scheduling_link(
         return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=e)
 
     else:
-        return JSONResponse(status_code=status.HTTP_200_OK, content="Mail scheduled Successfully")
-
+        new_log = models.Logs(username=user, date_time=str(datetime.datetime.now()),
+                              action_performed="Scheduled an e-Mail consisting of link")
+        db.add(new_log)
+        db.commit()
+        db.refresh(new_log)
+        return JSONResponse(status_code=status.HTTP_200_OK, content="Email scheduled successfully")
 
 client = discord.Client()
 
@@ -312,7 +366,7 @@ async def startup_event():
 
 
 @app.post("/discord/message")
-async def sending_message(message: str):
+async def sending_message(user: str = Form(...), message: str = Form(...), db: Session = Depends(database.get_db)):
     channel_id = 955391175823618072
     channel = client.get_channel(channel_id)
     try:
@@ -322,11 +376,16 @@ async def sending_message(message: str):
         return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=e)
 
     else:
-        return JSONResponse(status_code=status.HTTP_200_OK, content='Message sent Successfully.')
+        new_log = models.Logs(username=user, date_time=str(datetime.datetime.now()),
+                              action_performed="Sent the Discord Message")
+        db.add(new_log)
+        db.commit()
+        db.refresh(new_log)
+        return JSONResponse(status_code=status.HTTP_200_OK, content='Message sent Successfully')
 
 
 @app.post("/discord/file_with_message")
-async def sending_message_and_file(message: str = Form(...), file: UploadFile = Form(...)):
+async def sending_message_and_file(user: str = Form(...), message: str = Form(...), file: UploadFile = Form(...), db: Session = Depends(database.get_db)):
     channel_id = 955391175823618072
     channel = client.get_channel(channel_id)
 
@@ -347,6 +406,11 @@ async def sending_message_and_file(message: str = Form(...), file: UploadFile = 
         return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=e)
 
     else:
+        new_log = models.Logs(username=user, date_time=str(datetime.datetime.now()),
+                              action_performed="Sent a discord message with file")
+        db.add(new_log)
+        db.commit()
+        db.refresh(new_log)
         return JSONResponse(status_code=status.HTTP_200_OK, content='File and Message sent Successfully.')
 
     finally:
@@ -354,7 +418,7 @@ async def sending_message_and_file(message: str = Form(...), file: UploadFile = 
 
 
 @app.post("/discord/link_with_message")
-async def sending_message_and_link(message: str, link: str):
+async def sending_message_and_link(user: str = Form(...), message: str = Form(...), link: str = Form(...), db: Session = Depends(database.get_db)):
     channel_id = 955391175823618072
     channel = client.get_channel(channel_id)
 
@@ -364,6 +428,11 @@ async def sending_message_and_link(message: str, link: str):
         await channel.send(message + "\n" + link)
 
     except Exception as e:
+        new_log = models.Logs(username=user, date_time=str(datetime.datetime.now()),
+                              action_performed="Sent a discord message with a link")
+        db.add(new_log)
+        db.commit()
+        db.refresh(new_log)
         return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=e)
 
     else:
@@ -371,7 +440,7 @@ async def sending_message_and_link(message: str, link: str):
 
 
 @app.post("/discord/schedule_message")
-async def scheduling_message(message: str, date_and_time: str):
+async def scheduling_message(user: str = Form(...), message: str = Form(...), date_and_time: str = Form(...), db: Session = Depends(database.get_db)):
     year = date_and_time[:4]
     month = date_and_time[5:7]
     day = date_and_time[8:10]
@@ -402,11 +471,16 @@ async def scheduling_message(message: str, date_and_time: str):
         return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=e)
 
     else:
+        new_log = models.Logs(username=user, date_time=str(datetime.datetime.now()),
+                              action_performed="Sent a discord message with a link")
+        db.add(new_log)
+        db.commit()
+        db.refresh(new_log)
         return JSONResponse(status_code=status.HTTP_200_OK, content='Message Scheduled Successfully')
 
 
 @app.post("/discord/schedule_link_with_message")
-async def scheduling_message_and_link(message: str, date_and_time: str, link: str,):
+async def scheduling_message_and_link(user: str = Form(...), message: str = Form(...), date_and_time: str = Form(...), link: str = Form(...), db: Session = Depends(database.get_db)):
     link = markdown.markdown(link)
     link = re.compile(r'<.*?>').sub('', link)
 
@@ -440,11 +514,16 @@ async def scheduling_message_and_link(message: str, date_and_time: str, link: st
         return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=e)
 
     else:
+        new_log = models.Logs(username=user, date_time=str(datetime.datetime.now()),
+                              action_performed="Scheduled a Discord Message with a Link")
+        db.add(new_log)
+        db.commit()
+        db.refresh(new_log)
         return JSONResponse(status_code=status.HTTP_200_OK, content='Message Scheduled Successfully')
 
 
 @app.post("/slack/message")
-async def sending_message(message: str):
+async def sending_message(user: str = Form(...), message: str = Form(...), db: Session = Depends(database.get_db)):
     slack_client = WebClient(token=os.getenv("SLACK_BOT_TOKEN"))
     logger = logging.getLogger(__name__)
 
@@ -462,11 +541,16 @@ async def sending_message(message: str):
         return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=e)
 
     else:
+        new_log = models.Logs(username=user, date_time=str(datetime.datetime.now()),
+                              action_performed="Send a Slack Message")
+        db.add(new_log)
+        db.commit()
+        db.refresh(new_log)
         return JSONResponse(status_code=status.HTTP_200_OK, content='Message Sent Successfully')
 
 
 @app.post("/slack/file_with_message")
-async def sending_message_and_file(message: str = Form(...), file: UploadFile = File(...)):
+async def sending_message_and_file(user: str = Form(...) ,message: str = Form(...), file: UploadFile = Form(...), db: Session = Depends(database.get_db)):
     slack_client = WebClient(token=os.getenv("SLACK_BOT_TOKEN"))
     logger = logging.getLogger(__name__)
 
@@ -494,6 +578,11 @@ async def sending_message_and_file(message: str = Form(...), file: UploadFile = 
         return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=e)
 
     else:
+        new_log = models.Logs(username=user, date_time=str(datetime.datetime.now()),
+                              action_performed="Send a Slack Message with a File")
+        db.add(new_log)
+        db.commit()
+        db.refresh(new_log)
         return JSONResponse(status_code=status.HTTP_200_OK, content='Message Sent Successfully')
 
     finally:
@@ -501,7 +590,7 @@ async def sending_message_and_file(message: str = Form(...), file: UploadFile = 
 
 
 @app.post("/slack/link_with_message")
-async def sending_message_and_link(message: str, link: str):
+async def sending_message_and_link(user: str = Form(...), message: str = Form(...), link: str = Form(...), db: Session = Depends(database.get_db)):
     slack_client = WebClient(token=os.getenv("SLACK_BOT_TOKEN"))
     logger = logging.getLogger(__name__)
 
@@ -522,11 +611,16 @@ async def sending_message_and_link(message: str, link: str):
         return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=e)
 
     else:
+        new_log = models.Logs(username=user, date_time=str(datetime.datetime.now()),
+                              action_performed="Send a Slack Message with a Link")
+        db.add(new_log)
+        db.commit()
+        db.refresh(new_log)
         return JSONResponse(status_code=status.HTTP_200_OK, content='Message sent Successfully')
 
 
 @app.post("/slack/schedule_message")
-async def scheduling_message(message: str, date_and_time: str):
+async def scheduling_message(user: str = Form(...), message: str = Form(...), date_and_time: str = Form(...), db: Session = Depends(database.get_db)):
     slack_client = WebClient(token=os.getenv("SLACK_BOT_TOKEN"))
     logger = logging.getLogger(__name__)
 
@@ -557,11 +651,16 @@ async def scheduling_message(message: str, date_and_time: str):
         return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=e)
 
     else:
+        new_log = models.Logs(username=user, date_time=str(datetime.datetime.now()),
+                              action_performed="Schedule a Slack Message")
+        db.add(new_log)
+        db.commit()
+        db.refresh(new_log)
         return JSONResponse(status_code=status.HTTP_200_OK, content='Message scheduled Successfully')
 
 
 @app.post("/slack/schedule_link_with_message")
-async def scheduling_message_and_link(message: str, link: str, date_and_time: str):
+async def scheduling_message_and_link(user: str = Form(...), message: str = Form(...), link: str = Form(...), date_and_time: str = Form(...), db: Session = Depends(database.get_db)):
     slack_client = WebClient(token=os.getenv("SLACK_BOT_TOKEN"))
     logger = logging.getLogger(__name__)
 
@@ -594,4 +693,9 @@ async def scheduling_message_and_link(message: str, link: str, date_and_time: st
         return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=e)
 
     else:
+        new_log = models.Logs(username=user, date_time=str(datetime.datetime.now()),
+                              action_performed="Scheduled a Slack Message with a Link")
+        db.add(new_log)
+        db.commit()
+        db.refresh(new_log)
         return JSONResponse(status_code=status.HTTP_200_OK, content='Message scheduled Successfully')
